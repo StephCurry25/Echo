@@ -207,4 +207,133 @@ async def remind(ctx, minutes: int, *, reason: str):
 # --- HARDWARE STORAGE SYSTEM ---
 # ==============================================================================
 @bot.command()
-async def store
+async def store(ctx, k: str = None):
+    if not k:
+        return await ctx.send("⚠️ Key required: `!store [key_name]`")
+    await ctx.send(f"🔐 **Mainframe Secure Entry Mode:** Operational for block `{k}`.", view=StoreView(k))
+
+@bot.command()
+async def unstore(ctx, k):
+    cursor.execute("SELECT content FROM storage WHERE key=?", (k.lower(),))
+    res = cursor.fetchone()
+    if res:
+        await ctx.send(f"📦 Data:\n{res[0]}")
+    else:
+        await ctx.send("❌ Data segment not found within current tables.")
+
+@bot.command()
+async def storage(ctx):
+    cursor.execute("SELECT key FROM storage")
+    res = cursor.fetchall()
+    keys = "\n".join([f"• {r[0]}" for r in res]) if res else "No keys currently registered."
+    await ctx.send(embed=discord.Embed(title="🗄️ STORAGE INDEX", description=keys, color=0x3498db))
+
+@bot.command()
+async def delete(ctx, k):
+    cursor.execute("DELETE FROM storage WHERE key=?", (k.lower(),))
+    db.commit()
+    await ctx.send(f"🗑️ Purged sector `{k}` completely from local hardware tables.")
+
+# ==============================================================================
+# --- APPLICATION INTELLIGENCE MODULES ---
+# ==============================================================================
+@bot.tree.command(name="server-info", description="Gathers server intel")
+async def server_info(interaction: discord.Interaction):
+    if interaction.user.id != OWNER_ID:
+        return
+    g = interaction.guild
+    embed = discord.Embed(title=f"📊 INTEL: {g.name}", color=0x00ffff)
+    embed.add_field(name="Total Members", value=g.member_count)
+    await interaction.response.send_message(embed=embed)
+
+# ==============================================================================
+# --- CHRONO SCHEDULERS & AUTOMATION ---
+# ==============================================================================
+@tasks.loop(seconds=1)
+async def reminder_scheduler():
+    now_tokyo = datetime.now(TOKYO_TZ)
+    cursor.execute('SELECT id, channel_id, end_time, reason FROM reminders')
+    rows = cursor.fetchall()
+    
+    for row in rows:
+        rem_id, channel_id, end_time_str, reason = row
+        end_time = datetime.fromisoformat(end_time_str)
+        
+        if now_tokyo >= end_time:
+            channel = bot.get_channel(channel_id)
+            if channel:
+                try:
+                    await channel.send(content=f"🚨 <@{OWNER_ID}> **ALERT:** {reason}", view=ReminderControl(reason))
+                except:
+                    pass
+            cursor.execute('DELETE FROM reminders WHERE id = ?', (rem_id,))
+            db.commit()
+
+@tasks.loop(seconds=3)
+async def lockdown_monitor():
+    for guild in bot.guilds:
+        owner = guild.get_member(OWNER_ID)
+        if not owner:
+            continue
+        
+        is_offline = (owner.status == discord.Status.offline)
+        
+        if is_offline and not bot.lockdown_active:
+            bot.lockdown_active = True
+            for channel in guild.text_channels:
+                try:
+                    await channel.set_permissions(guild.default_role, send_messages=False)
+                except:
+                    pass
+            print("🔒 Lockdown Mode: Active. Server channels clamped down.")
+        elif not is_offline and bot.lockdown_active:
+            bot.lockdown_active = False
+            for channel in guild.text_channels:
+                try:
+                    await channel.set_permissions(guild.default_role, send_messages=None)
+                except:
+                    pass
+            print("🔓 Lockdown Mode: Terminated. Baseline permissions restored.")
+
+# ==============================================================================
+# --- SIGNAL CAPTURE AND BACKLOGS ---
+# ==============================================================================
+@bot.event
+async def on_member_join(member):
+    gate = discord.utils.get(member.guild.text_channels, name="entry-gate")
+    if gate:
+        await gate.send(content=f"🚨 <@{OWNER_ID}> — **2FA ENTRY PROTOCOL REQUIRED**", view=EntryProtocol(member))
+
+@bot.event
+async def on_bulk_message_delete(messages):
+    logs = discord.utils.get(messages[0].guild.text_channels, name="war-room")
+    if logs:
+        await logs.send(f"🗑️ **Bulk Delete Event:** {len(messages)} messages dropped in {messages[0].channel.mention}")
+
+# ==============================================================================
+# --- ENGINE RUNTIME LIFECYCLE ---
+# ==============================================================================
+def run_bot_worker():
+    """Executes the bot initialization loop cleanly inside an independent thread context."""
+    try:
+        print("🛰 ...Connecting to Discord Gateway via Background Pipeline...")
+        bot.run(TOKEN.strip())
+    except Exception as e:
+        print(f"❌ Discord core gateway failure: {e}")
+
+if __name__ == "__main__":
+    if TOKEN:
+        # 1. Launch the Discord listener loop safely inside a background worker thread
+        bot_thread = Thread(target=run_bot_worker)
+        bot_thread.daemon = True
+        bot_thread.start()
+
+        # 2. Bind the main thread completely to the Flask server. 
+        # This satisfies Render's strict port checks and blocks early exits.
+        print("🌐 Anchoring web production server on assigned Render port.")
+        try:
+            run_server()
+        except Exception as e:
+            print(f"❌ Web engine failed to bind to network port: {e}")
+    else:
+        print("❌ FATAL: TOKEN environment variable is missing in Render dashboard.")

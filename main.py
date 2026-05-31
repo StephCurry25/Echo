@@ -1,7 +1,8 @@
 import os, discord, sqlite3, asyncio
 from discord.ext import commands, tasks
 from datetime import datetime, timedelta, timezone
-from keep_alive import app as web_app  # Import our ASGI wrapped web app
+from threading import Thread
+from keep_alive import run_server  # Grab our lightweight web engine
 
 # --- DATABASE ---
 db = sqlite3.connect('edith_mainframe.db')
@@ -253,28 +254,18 @@ async def on_bulk_message_delete(messages):
     logs = discord.utils.get(messages[0].guild.text_channels, name="war-room")
     if logs: await logs.send(f"🗑️ **Bulk Delete:** {len(messages)} messages in {messages[0].channel.mention}")
 
-# --- COMBINED ENTRANCE APPLICATION MASTER ---
-class CombinedAsgiApp:
-    def __init__(self, asgi_web, discord_bot):
-        self.asgi_web = asgi_web
-        self.discord_bot = discord_bot
-
-    async def __call__(self, scope, receive, send):
-        if scope["type"] == "lifespan":
-            while True:
-                message = await receive()
-                if message["type"] == "lifespan.startup":
-                    # Fire up the Discord Bot connection natively inside the core app lifespan
-                    if TOKEN:
-                        asyncio.create_task(self.discord_bot.start(TOKEN.strip()))
-                    else:
-                        print("❌ FATAL: TOKEN environment variable missing.")
-                    await send({"type": "lifespan.startup.complete"})
-                elif message["type"] == "lifespan.shutdown":
-                    await send({"type": "lifespan.shutdown.complete"})
-                    return
-        else:
-            # Pass all web requests through cleanly to Flask
-            await self.asgi_web(scope, receive, send)
-
-app = CombinedAsgiApp(web_app, bot)
+# --- STARTUP ENGINE ---
+if __name__ == "__main__":
+    if TOKEN:
+        # Fire up Flask in a persistent background worker
+        server_thread = Thread(target=run_server)
+        server_thread.start()
+        print("🌐 Web core online. Activating gateway connectivity...")
+        
+        # Keep the main process entirely for our discord loop
+        try:
+            bot.run(TOKEN.strip())
+        except Exception as e:
+            print(f"❌ Core engine connection failure: {e}")
+    else:
+        print("❌ FATAL: TOKEN environment variable is missing.")

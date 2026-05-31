@@ -10,6 +10,7 @@ app = Flask('')
 
 @app.route('/')
 def home():
+    # Detect the true request origin behind Cloudflare's network proxy
     client_ip = request.headers.get('CF-Connecting-IP', request.remote_addr)
     user_agent = request.headers.get('User-Agent', 'Unknown Ping Engine')
     

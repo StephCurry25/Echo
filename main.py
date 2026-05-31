@@ -1,7 +1,8 @@
 import os, discord, sqlite3, asyncio
 from discord.ext import commands, tasks
 from datetime import datetime, timedelta, timezone
-from keep_alive import keep_alive  # Handles web traffic safely
+from threading import Thread
+from keep_alive import app  # Import the raw Flask app object directly
 
 # --- DATABASE ---
 db = sqlite3.connect('edith_mainframe.db')
@@ -22,7 +23,7 @@ class EdithBot(commands.Bot):
         super().__init__(command_prefix='!', intents=intents)
         self.lockdown_active = False
 
-    async def setup_hook(self):  # FIXED: Syntax error resolved here
+    async def setup_hook(self):
         await self.tree.sync()
         if not self.lockdown_monitor.is_running():
             self.lockdown_monitor.start()
@@ -253,13 +254,17 @@ async def on_bulk_message_delete(messages):
     logs = discord.utils.get(messages[0].guild.text_channels, name="war-room")
     if logs: await logs.send(f"🗑️ **Bulk Delete:** {len(messages)} messages in {messages[0].channel.mention}")
 
-# --- START ---
-if __name__ == "__main__":
+# --- BACKGROUND IGNITION ---
+def run_bot():
     if TOKEN:
-        keep_alive()  # Spins up the background Cloudflare port server safely
         try:
             bot.run(TOKEN.strip())
         except Exception as e:
             print(f"❌ Error starting bot: {e}")
     else:
         print("❌ FATAL: TOKEN environment variable is missing.")
+
+# Boot up the Discord bot inside a safe background thread
+bot_thread = Thread(target=run_bot, daemon=True)
+bot_thread.start()
+print("🛰️ Discord Engine decoupled. Delegating main execution pipeline to Gunicorn web handler.")

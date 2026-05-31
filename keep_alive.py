@@ -1,18 +1,17 @@
-import os
 import logging
 from flask import Flask, request, jsonify
+from asgiref.wsgi import WsgiToAsgi
 
-# Disable default Flask logging to keep console clean
+# Suppress noisy logs
 log = logging.getLogger('werkzeug')
 log.setLevel(logging.ERROR)
 
-app = Flask('')
+flask_app = Flask('')
 
-@app.route('/')
+@flask_app.route('/')
 def home():
     client_ip = request.headers.get('CF-Connecting-IP', request.remote_addr)
     user_agent = request.headers.get('User-Agent', 'Unknown Ping Engine')
-    
     return jsonify({
         "status": "online",
         "system": "E.D.I.T.H. Mainframe",
@@ -20,26 +19,25 @@ def home():
         "agent": user_agent
     }), 200
 
-@app.route('/pulse')
+@flask_app.route('/pulse')
 def pulse():
     return "PULSE_OK", 200
 
-# We removed the manual thread starter functions here 
-# because Gunicorn will now manage the web process directly.import os
-import logging
+# Wrap the Flask WSGI app into an ASGI app so it fits into the async event loop
+app = WsgiToAsgi(flask_app)import logging
 from flask import Flask, request, jsonify
+from asgiref.wsgi import WsgiToAsgi
 
-# Disable default Flask logging to keep console clean
+# Suppress noisy logs
 log = logging.getLogger('werkzeug')
 log.setLevel(logging.ERROR)
 
-app = Flask('')
+flask_app = Flask('')
 
-@app.route('/')
+@flask_app.route('/')
 def home():
     client_ip = request.headers.get('CF-Connecting-IP', request.remote_addr)
     user_agent = request.headers.get('User-Agent', 'Unknown Ping Engine')
-    
     return jsonify({
         "status": "online",
         "system": "E.D.I.T.H. Mainframe",
@@ -47,9 +45,9 @@ def home():
         "agent": user_agent
     }), 200
 
-@app.route('/pulse')
+@flask_app.route('/pulse')
 def pulse():
     return "PULSE_OK", 200
 
-# We removed the manual thread starter functions here 
-# because Gunicorn will now manage the web process directly.
+# Wrap the Flask WSGI app into an ASGI app so it fits into the async event loop
+app = WsgiToAsgi(flask_app)

@@ -2,7 +2,7 @@ import os
 import logging
 from flask import Flask, request, jsonify
 
-# Suppress noisy routing logs in Render console
+# Suppress noisy routing logs in the Render console
 log = logging.getLogger('werkzeug')
 log.setLevel(logging.ERROR)
 
@@ -22,6 +22,6 @@ def pulse():
     return "PULSE_OK", 200
 
 def run_server():
-    # Render automatically sets a PORT environment variable. We must bind to it.
+    # Render assigns a dynamic port via environment variables. We must capture it.
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)

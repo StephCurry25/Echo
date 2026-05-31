@@ -1,5 +1,6 @@
 discord.py
 Flask
-gunicorn
+asgiref
+uvicorn
 google-generativeai
 python-dotenv

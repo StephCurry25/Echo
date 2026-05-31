@@ -6,7 +6,7 @@ import logging
 from flask import Flask, request, jsonify
 from discord.ext import commands, tasks
 from datetime import datetime, timedelta, timezone
-from threading import Thread
+import werkzeug.serving
 
 # ==============================================================================
 # --- LOCAL STORAGE DATABASE ---
@@ -26,16 +26,11 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
-    return jsonify({"status": "online", "system": "E.D.I.T.H. Mainframe", "origin_verified": client_ip}), 200
+    return jsonify({"status": "online", "system": "E.D.I.T.H. Mainframe"}), 200
 
 @app.route('/pulse')
 def pulse():
     return "PULSE_OK", 200
-
-def run_production_server():
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
 
 # ==============================================================================
 # --- BOT INITIALIZATION ---
@@ -62,7 +57,7 @@ bot = EdithBot()
 
 @bot.event
 async def on_ready():
-    print(f"🛰️ Mainframe Online: {bot.user.name}")
+    print(f"🛰️ SUCCESS! Mainframe is active on Discord: {bot.user.name}")
 
 @bot.check
 async def globally_only_owner(ctx):
@@ -163,24 +158,29 @@ async def lockdown_monitor():
                 except: pass
 
 # ==============================================================================
-# --- SYSTEM CONTROL TRACKS ---
+# --- CONCURRENT ASYNC RUNTIME LIFECYCLE ---
 # ==============================================================================
-def run_bot_worker():
+async def main():
+    if not TOKEN:
+        print("❌ FATAL: TOKEN configuration environment missing.")
+        return
+
+    # 1. Prepare and configure the asynchronous web server engine
+    port = int(os.environ.get("PORT", 5000))
+    web_server = werkzeug.serving.make_server('0.0.0.0', port, app, threaded=True)
+    
+    # Wrap the blocking web runner inside an async task execution context
+    loop = asyncio.get_running_loop()
+    print(f"🌐 Anchoring production server context on assigned Render port: {port}")
+    loop.run_in_executor(None, web_server.serve_forever)
+
+    # 2. Fire up the Discord Bot loop directly on the primary event pipeline
+    print("🛰️ Opening explicit gateway pipeline to Discord Gateway...")
     try:
-        print("🛰️ Opening background connection pipeline to Discord Gateway...")
-        bot.run(TOKEN.strip())
+        async with bot:
+            await bot.start(TOKEN.strip())
     except Exception as e:
         print(f"❌ Core Gateway Crash: {e}")
 
 if __name__ == "__main__":
-    if TOKEN:
-        # 1. Fire up Discord loop in background worker
-        bot_thread = Thread(target=run_bot_worker)
-        bot_thread.daemon = True
-        bot_thread.start()
-
-        # 2. Bind Flask server to main thread to block exit routine
-        print("🌐 Anchoring production server context on assigned Render port.")
-        run_production_server()
-    else:
-        print("❌ FATAL: TOKEN configuration environment missing.")
+    asyncio.run(main())

@@ -1,4 +1,5 @@
 discord.py
-flask
+Flask
+gunicorn
 google-generativeai
 python-dotenv

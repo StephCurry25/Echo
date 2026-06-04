@@ -14,65 +14,84 @@ app = Flask('')
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# --- MODAL FOR INPUTS ---
-class SetupModal(discord.ui.Modal):
-    def __init__(self, title, field_label, db_column):
-        super().__init__(title=title)
-        self.db_column = db_column
-        self.input_field = discord.ui.TextInput(label=field_label, style=discord.TextStyle.paragraph)
-        self.add_item(self.input_field)
+# --- DATABASE HELPERS ---
+def update_db(guild_id, column, value):
+    db = sqlite3.connect('edith_mainframe.db')
+    db.execute(f'UPDATE server_settings SET {column}=? WHERE guild_id=?', (value, guild_id))
+    db.commit()
+    db.close()
 
-    async def on_submit(self, interaction: discord.Interaction):
-        db = sqlite3.connect('edith_mainframe.db')
-        db.execute(f'UPDATE server_settings SET {self.db_column}=? WHERE guild_id=?', (self.input_field.value, interaction.guild.id))
-        db.commit()
-        db.close()
-        await interaction.response.send_message(f"✅ Saved {self.db_column}: {self.input_field.value}", ephemeral=True)
+# --- UI COMPONENTS ---
+class RoleSelect(discord.ui.RoleSelect):
+    def __init__(self):
+        super().__init__(placeholder="Select a newcomer role...")
 
-# --- UI WITH MODAL TRIGGERS ---
+    async def callback(self, interaction: discord.Interaction):
+        role = self.values[0]
+        update_db(interaction.guild.id, "role_name", role.name)
+        await interaction.response.send_message(f"✅ Role set to {role.mention}", ephemeral=True)
+
 class SetupView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
+        self.add_item(RoleSelect())
 
     @discord.ui.button(label="Security Gate", style=discord.ButtonStyle.danger)
     async def sec_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(SetupModal("Security Gate", "Enter Security Rule:", "security_gate"))
+        # Create "gate" channel
+        guild = interaction.guild
+        channel = discord.utils.get(guild.text_channels, name="gate")
+        if not channel:
+            channel = await guild.create_text_channel("gate")
+        await interaction.response.send_message(f"✅ Security channel {channel.mention} ready.", ephemeral=True)
 
-    @discord.ui.button(label="Newcomer Role", style=discord.ButtonStyle.primary)
-    async def role_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(SetupModal("Role Setup", "Enter Role Name:", "role_name"))
-
-    @discord.ui.button(label="Welcome DM", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="Set Welcome DM", style=discord.ButtonStyle.secondary)
     async def dm_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(SetupModal("DM Setup", "Enter Welcome Message:", "welcome_dm"))
+        class DMModal(discord.ui.Modal, title="Set Welcome DM"):
+            msg = discord.ui.TextInput(label="Message")
+            async def on_submit(self, i):
+                update_db(i.guild.id, "welcome_dm", self.msg.value)
+                await i.response.send_message("DM saved!", ephemeral=True)
+        await interaction.response.send_modal(DMModal())
 
-# --- SLASH COMMANDS ---
+# --- COMMANDS ---
 @bot.tree.command(name="setup", description="Open the Echo setup UI")
 async def setup(interaction: discord.Interaction):
     await interaction.response.send_message("Configure your server:", view=SetupView())
 
-@bot.tree.command(name="kick", description="Kick a member")
-@app_commands.checks.has_permissions(kick_members=True)
-async def kick(interaction: discord.Interaction, member: discord.Member, reason: str = None):
-    await member.kick(reason=reason)
-    await interaction.response.send_message(f"👢 Kicked {member.name}.")
+@bot.tree.command(name="afk", description="Set AFK status")
+async def afk(interaction: discord.Interaction, reason: str):
+    db = sqlite3.connect('edith_mainframe.db')
+    db.execute("INSERT OR REPLACE INTO afk (user_id, reason) VALUES (?, ?)", (interaction.user.id, reason))
+    db.commit()
+    db.close()
+    await interaction.response.send_message(f"💤 You are now AFK: {reason}")
 
-@bot.tree.command(name="ban", description="Ban a member")
-@app_commands.checks.has_permissions(ban_members=True)
-async def ban(interaction: discord.Interaction, member: discord.Member, reason: str = None):
-    await member.ban(reason=reason)
-    await interaction.response.send_message(f"🔨 Banned {member.name}.")
+# --- LISTENERS ---
+@bot.event
+async def on_message(message):
+    if message.author.bot: return
+    # Remove AFK
+    db = sqlite3.connect('edith_mainframe.db')
+    cursor = db.cursor()
+    cursor.execute("DELETE FROM afk WHERE user_id=?", (message.author.id,))
+    if cursor.rowcount > 0:
+        await message.channel.send(f"Welcome back, {message.author.mention}!")
+    db.commit()
+    db.close()
+    await bot.process_commands(message)
 
-# --- SYNC & RUN ---
+# --- EXECUTION ---
 @bot.event
 async def on_ready():
     await bot.tree.sync()
-    print("✅ Echo is online and synced.")
+    print("✅ Echo is online.")
 
 async def main():
     db = sqlite3.connect('edith_mainframe.db')
-    db.execute('CREATE TABLE IF NOT EXISTS server_settings (guild_id INTEGER PRIMARY KEY, role_name TEXT, welcome_dm TEXT, security_gate TEXT)')
+    db.execute('CREATE TABLE IF NOT EXISTS server_settings (guild_id INTEGER PRIMARY KEY, role_name TEXT, welcome_dm TEXT)')
     db.execute('INSERT OR IGNORE INTO server_settings (guild_id) VALUES (0)')
+    db.execute('CREATE TABLE IF NOT EXISTS afk (user_id INTEGER PRIMARY KEY, reason TEXT)')
     db.commit()
     db.close()
     

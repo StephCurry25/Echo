@@ -11,11 +11,11 @@ intents = discord.Intents.all()
 bot = commands.Bot(command_prefix='!', intents=intents)
 
 # --- DATABASE HELPERS ---
-def update_db(guild_id, column, value):
+def get_role_id(guild_id):
     db = sqlite3.connect('edith_mainframe.db')
-    db.execute(f'UPDATE server_settings SET {column}=? WHERE guild_id=?', (value, guild_id))
-    db.commit()
+    row = db.execute("SELECT role_id FROM server_settings WHERE guild_id=?", (guild_id,)).fetchone()
     db.close()
+    return row[0] if row else None
 
 # --- UI COMPONENTS ---
 class GateView(discord.ui.View):
@@ -24,12 +24,16 @@ class GateView(discord.ui.View):
         self.member = member
     async def interaction_check(self, i: discord.Interaction):
         if not i.user.guild_permissions.administrator:
-            await i.response.send_message("❌ Only admins can use this.", ephemeral=True)
+            await i.response.send_message("❌ Admin only.", ephemeral=True)
             return False
         return True
     @discord.ui.button(label="Accept", style=discord.ButtonStyle.green)
     async def accept(self, i: discord.Interaction, b: discord.ui.Button):
-        await i.response.send_message(f"✅ {self.member.name} accepted.")
+        role_id = get_role_id(i.guild.id)
+        if role_id:
+            role = i.guild.get_role(int(role_id))
+            if role: await self.member.add_roles(role)
+        await i.response.send_message(f"✅ {self.member.name} accepted and role assigned.")
         self.stop()
     @discord.ui.button(label="Deny", style=discord.ButtonStyle.red)
     async def deny(self, i: discord.Interaction, b: discord.ui.Button):
@@ -37,10 +41,22 @@ class GateView(discord.ui.View):
         await i.response.send_message(f"❌ {self.member.name} kicked.")
         self.stop()
 
+class RoleSelect(discord.ui.RoleSelect):
+    def __init__(self):
+        super().__init__(placeholder="Select newcomer role...")
+    async def callback(self, i: discord.Interaction):
+        role = self.values[0]
+        db = sqlite3.connect('edith_mainframe.db')
+        db.execute("INSERT OR REPLACE INTO server_settings (guild_id, role_id) VALUES (?, ?)", (i.guild.id, role.id))
+        db.commit()
+        db.close()
+        await i.response.send_message(f"✅ Saved role: {role.name}", ephemeral=True)
+
 class SetupView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
-    @discord.ui.button(label="Create/Reset Gate", style=discord.ButtonStyle.danger)
+        self.add_item(RoleSelect())
+    @discord.ui.button(label="Create/Reset Gate", style=discord.ButtonStyle.danger, row=2)
     async def sec_btn(self, i: discord.Interaction, b: discord.ui.Button):
         channel = discord.utils.get(i.guild.text_channels, name="gate")
         if not channel: channel = await i.guild.create_text_channel("gate")
@@ -51,75 +67,17 @@ class SetupView(discord.ui.View):
 async def setup(i: discord.Interaction):
     await i.response.send_message("Server Setup:", view=SetupView())
 
-@bot.tree.command(name="afk", description="Set AFK status")
-async def afk(i: discord.Interaction, reason: str):
-    db = sqlite3.connect('edith_mainframe.db')
-    db.execute("INSERT OR REPLACE INTO afk (user_id, reason) VALUES (?, ?)", (i.user.id, reason))
-    db.commit()
-    db.close()
-    await i.response.send_message(f"💤 AFK set: {reason}")
-
-@bot.tree.command(name="kick", description="Kick user")
-@app_commands.checks.has_permissions(kick_members=True)
-async def kick(i: discord.Interaction, member: discord.Member, reason: str = None):
-    await member.kick(reason=reason)
-    await i.response.send_message(f"👢 Kicked {member.name}")
-
-@bot.tree.command(name="ban", description="Ban user")
-@app_commands.checks.has_permissions(ban_members=True)
-async def ban(i: discord.Interaction, member: discord.Member, reason: str = None):
-    await member.ban(reason=reason)
-    await i.response.send_message(f"🔨 Banned {member.name}")
-
-@bot.tree.command(name="unban", description="Unban user by ID")
-@app_commands.checks.has_permissions(ban_members=True)
-async def unban(i: discord.Interaction, user_id: str):
-    await i.guild.unban(discord.Object(id=int(user_id)))
-    await i.response.send_message(f"🔓 Unbanned {user_id}")
-
-@bot.tree.command(name="mute", description="Mute user")
-@app_commands.checks.has_permissions(manage_roles=True)
-async def mute(i: discord.Interaction, member: discord.Member):
-    role = discord.utils.get(i.guild.roles, name="Muted")
-    if not role: role = await i.guild.create_role(name="Muted")
-    await member.add_roles(role)
-    await i.response.send_message(f"🤐 Muted {member.name}")
-
-@bot.tree.command(name="unmute", description="Unmute user")
-@app_commands.checks.has_permissions(manage_roles=True)
-async def unmute(i: discord.Interaction, member: discord.Member):
-    role = discord.utils.get(i.guild.roles, name="Muted")
-    await member.remove_roles(role)
-    await i.response.send_message(f"🔊 Unmuted {member.name}")
-
-# --- LISTENERS & RUN ---
-@bot.event
-async def on_member_join(member):
-    channel = discord.utils.get(member.guild.text_channels, name="gate")
-    if channel:
-        await channel.send(f"👋 Newcomer {member.mention}, wait for an admin.", view=GateView(member))
-
-@bot.event
-async def on_message(message):
-    if message.author.bot: return
-    db = sqlite3.connect('edith_mainframe.db')
-    for m in message.mentions:
-        res = db.execute("SELECT reason FROM afk WHERE user_id=?", (m.id,)).fetchone()
-        if res: await message.channel.send(f"💤 {m.name} is AFK: {res[0]}")
-    if db.execute("DELETE FROM afk WHERE user_id=?", (message.author.id,)).rowcount > 0:
-        await message.channel.send(f"👋 Welcome back, {message.author.mention}!")
-    db.commit()
-    db.close()
-    await bot.process_commands(message)
+# ... [Keep your other moderation/AFK commands exactly as they were] ...
 
 @bot.event
 async def on_ready():
     keep_alive()
     await bot.tree.sync()
-    print("✅ Echo is fully online.")
+    print("✅ Echo is online.")
 
 async def main():
     db = sqlite3.connect('edith_mainframe.db')
+    db.execute('CREATE TABLE IF NOT EXISTS server_settings (guild_id INTEGER PRIMARY KEY, role_id INTEGER)')
     db.execute('CREATE TABLE IF NOT EXISTS afk (user_id INTEGER PRIMARY KEY, reason TEXT)')
     db.commit()
     db.close()

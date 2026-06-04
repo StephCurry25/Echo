@@ -2,14 +2,21 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import os
+import threading
+from flask import Flask
 
-# --- INITIALIZATION ---
+# --- WEB SERVER (Port 8080) ---
+app = Flask(__name__)
+@app.route('/')
+def home(): return "Bot is running on port 8080"
+def run_web_server(): app.run(host='0.0.0.0', port=8080)
+
+# --- BOT SETUP ---
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Configuration Storage
 config = {"welcome_ch": None, "audit_ch": None, "admin_role": None, "theme": "Robot", "assign_role": None}
 
 # --- TICKET UI ---
@@ -21,16 +28,15 @@ class TicketOpenView(discord.ui.View):
         await channel.set_permissions(i.guild.default_role, read_messages=False)
         await channel.set_permissions(i.user, read_messages=True, send_messages=True)
         await i.response.send_message(f"✅ Ticket created: {channel.mention}", ephemeral=True)
-        if config["audit_ch"]:
-            await config["audit_ch"].send(f"📂 Ticket opened by {i.user.name}")
+        if config["audit_ch"]: await config["audit_ch"].send(f"📂 Ticket opened by {i.user.name}")
 
 # --- COMMANDS ---
-@bot.tree.command(name="setup", description="Setup welcome channel, role, and theme")
+@bot.tree.command(name="setup", description="Configure welcome channel, role, and theme")
 async def setup(i: discord.Interaction, channel: discord.TextChannel, role: discord.Role, theme: str):
     config.update({"welcome_ch": channel, "assign_role": role, "theme": theme})
-    await i.response.send_message(f"✅ Setup complete! Channel: {channel.mention}, Theme: {theme}", ephemeral=True)
+    await i.response.send_message(f"✅ Configured! Channel: {channel.mention}, Theme: {theme}", ephemeral=True)
 
-@bot.tree.command(name="tsetup", description="Setup Ticket System: audit channel and admin role")
+@bot.tree.command(name="tsetup", description="Setup Ticket System: Audit channel and Admin role")
 async def tsetup(i: discord.Interaction, audit_channel: discord.TextChannel, admin_role: discord.Role):
     config.update({"audit_ch": audit_channel, "admin_role": admin_role})
     await audit_channel.set_permissions(i.guild.default_role, read_messages=False)
@@ -39,14 +45,6 @@ async def tsetup(i: discord.Interaction, audit_channel: discord.TextChannel, adm
     await i.channel.send(embed=embed, view=TicketOpenView())
     await i.response.send_message("✅ Ticket system configured.", ephemeral=True)
 
-@bot.tree.command(name="unban", description="Unban a user by username")
-async def unban(i: discord.Interaction, username: str):
-    async for ban_entry in i.guild.bans():
-        if str(ban_entry.user) == username:
-            await i.guild.unban(ban_entry.user)
-            return await i.response.send_message(f"🔓 Unbanned {username}")
-    await i.response.send_message("❌ User not found in ban list.")
-
 @bot.tree.command(name="kick", description="Kick a member")
 async def kick(i: discord.Interaction, member: discord.Member):
     await member.kick(); await i.response.send_message(f"👢 Kicked {member.name}")
@@ -54,6 +52,14 @@ async def kick(i: discord.Interaction, member: discord.Member):
 @bot.tree.command(name="ban", description="Ban a member")
 async def ban(i: discord.Interaction, member: discord.Member):
     await member.ban(); await i.response.send_message(f"🔨 Banned {member.name}")
+
+@bot.tree.command(name="unban", description="Unban user by username")
+async def unban(i: discord.Interaction, username: str):
+    async for entry in i.guild.bans():
+        if str(entry.user) == username:
+            await i.guild.unban(entry.user)
+            return await i.response.send_message(f"🔓 Unbanned {username}")
+    await i.response.send_message("❌ User not found.")
 
 @bot.tree.command(name="mute", description="Mute a member")
 async def mute(i: discord.Interaction, member: discord.Member):
@@ -66,24 +72,21 @@ async def unmute(i: discord.Interaction, member: discord.Member):
     role = discord.utils.get(i.guild.roles, name="Muted")
     await member.remove_roles(role); await i.response.send_message(f"🔊 Unmuted {member.name}")
 
-# --- WELCOME EVENT ---
+# --- EVENTS ---
 @bot.event
 async def on_member_join(member):
     if config["assign_role"]: await member.add_roles(config["assign_role"])
     if config["welcome_ch"]:
-        themes = {
-            "StarWars": f"The Force is strong with {member.mention}!",
-            "Lego": f"Welcome {member.mention}! Everything is awesome!",
-            "Pirate": f"Ahoy {member.mention}! Welcome aboard!",
-            "Robot": f"System online. Welcome, {member.mention}."
-        }
-        await config["welcome_ch"].send(embed=discord.Embed(title="Welcome!", description=themes.get(config["theme"], "Welcome!"), color=discord.Color.green()))
+        themes = {"StarWars": "The Force is with you!", "Lego": "Everything is awesome!", "Pirate": "Ahoy!", "Robot": "Beep boop!"}
+        msg = themes.get(config["theme"], "Welcome!")
+        await config["welcome_ch"].send(embed=discord.Embed(title="Welcome!", description=f"{msg} {member.mention}", color=discord.Color.green()))
 
 @bot.event
 async def on_ready():
     await bot.tree.sync()
-    print("✅ Bot is online.")
+    print("✅ Bot is online and ready.")
 
 if __name__ == "__main__":
+    threading.Thread(target=run_web_server).start()
     token = os.environ.get("TOKEN")
     if token: bot.run(token.strip())

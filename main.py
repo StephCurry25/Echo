@@ -14,50 +14,54 @@ app = Flask('')
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# --- DATABASE HELPERS ---
-def update_db(guild_id, column, value):
+# --- GATE UI ---
+class GateView(discord.ui.View):
+    def __init__(self, member):
+        super().__init__(timeout=None)
+        self.member = member
+
+    @discord.ui.button(label="Accept", style=discord.ButtonStyle.green)
+    async def accept(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(f"✅ {self.member.name} accepted.")
+        self.stop()
+
+    @discord.ui.button(label="Deny", style=discord.ButtonStyle.red)
+    async def deny(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(f"❌ {self.member.name} denied.")
+        self.stop()
+
+# --- AFK & MESSAGE LISTENER ---
+@bot.event
+async def on_message(message):
+    if message.author.bot: return
+
+    # 1. Handle Mentions of AFK Users
+    if message.mentions:
+        for member in message.mentions:
+            db = sqlite3.connect('edith_mainframe.db')
+            cursor = db.cursor()
+            cursor.execute("SELECT reason FROM afk WHERE user_id=?", (member.id,))
+            res = cursor.fetchone()
+            db.close()
+            if res:
+                await message.channel.send(f"💤 {member.name} is AFK: {res[0]}")
+
+    # 2. Auto-remove AFK
     db = sqlite3.connect('edith_mainframe.db')
-    db.execute(f'UPDATE server_settings SET {column}=? WHERE guild_id=?', (value, guild_id))
+    cursor = db.cursor()
+    cursor.execute("DELETE FROM afk WHERE user_id=?", (message.author.id,))
+    if cursor.rowcount > 0:
+        await message.channel.send(f"👋 Welcome back, {message.author.mention}!")
     db.commit()
     db.close()
 
-# --- UI COMPONENTS ---
-class RoleSelect(discord.ui.RoleSelect):
-    def __init__(self):
-        super().__init__(placeholder="Select a newcomer role...")
-
-    async def callback(self, interaction: discord.Interaction):
-        role = self.values[0]
-        update_db(interaction.guild.id, "role_name", role.name)
-        await interaction.response.send_message(f"✅ Role set to {role.mention}", ephemeral=True)
-
-class SetupView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-        self.add_item(RoleSelect())
-
-    @discord.ui.button(label="Security Gate", style=discord.ButtonStyle.danger)
-    async def sec_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Create "gate" channel
-        guild = interaction.guild
-        channel = discord.utils.get(guild.text_channels, name="gate")
-        if not channel:
-            channel = await guild.create_text_channel("gate")
-        await interaction.response.send_message(f"✅ Security channel {channel.mention} ready.", ephemeral=True)
-
-    @discord.ui.button(label="Set Welcome DM", style=discord.ButtonStyle.secondary)
-    async def dm_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        class DMModal(discord.ui.Modal, title="Set Welcome DM"):
-            msg = discord.ui.TextInput(label="Message")
-            async def on_submit(self, i):
-                update_db(i.guild.id, "welcome_dm", self.msg.value)
-                await i.response.send_message("DM saved!", ephemeral=True)
-        await interaction.response.send_modal(DMModal())
+    await bot.process_commands(message)
 
 # --- COMMANDS ---
-@bot.tree.command(name="setup", description="Open the Echo setup UI")
-async def setup(interaction: discord.Interaction):
-    await interaction.response.send_message("Configure your server:", view=SetupView())
+@bot.tree.command(name="gate_test", description="Test the gate UI")
+async def gate_test(interaction: discord.Interaction):
+    # This simulates a user triggering the gate
+    await interaction.response.send_message(f"New user {interaction.user.name} at the gate:", view=GateView(interaction.user))
 
 @bot.tree.command(name="afk", description="Set AFK status")
 async def afk(interaction: discord.Interaction, reason: str):
@@ -67,20 +71,6 @@ async def afk(interaction: discord.Interaction, reason: str):
     db.close()
     await interaction.response.send_message(f"💤 You are now AFK: {reason}")
 
-# --- LISTENERS ---
-@bot.event
-async def on_message(message):
-    if message.author.bot: return
-    # Remove AFK
-    db = sqlite3.connect('edith_mainframe.db')
-    cursor = db.cursor()
-    cursor.execute("DELETE FROM afk WHERE user_id=?", (message.author.id,))
-    if cursor.rowcount > 0:
-        await message.channel.send(f"Welcome back, {message.author.mention}!")
-    db.commit()
-    db.close()
-    await bot.process_commands(message)
-
 # --- EXECUTION ---
 @bot.event
 async def on_ready():
@@ -89,8 +79,6 @@ async def on_ready():
 
 async def main():
     db = sqlite3.connect('edith_mainframe.db')
-    db.execute('CREATE TABLE IF NOT EXISTS server_settings (guild_id INTEGER PRIMARY KEY, role_name TEXT, welcome_dm TEXT)')
-    db.execute('INSERT OR IGNORE INTO server_settings (guild_id) VALUES (0)')
     db.execute('CREATE TABLE IF NOT EXISTS afk (user_id INTEGER PRIMARY KEY, reason TEXT)')
     db.commit()
     db.close()

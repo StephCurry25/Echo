@@ -11,18 +11,12 @@ TOKEN = os.environ.get('TOKEN')
 PORT = 8080
 app = Flask('')
 
+@app.route('/')
+def home():
+    return jsonify({"status": "online"}), 200
+
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix='!', intents=intents)
-
-# --- CORRECTED MODERATION COMMAND ---
-@bot.tree.command(name="sban", description="Shadow ban a user by ID")
-async def sban(interaction: discord.Interaction, user_id: str):
-    """Shadow bans a user using their ID."""
-    try:
-        await interaction.guild.ban(discord.Object(id=int(user_id)), reason="Shadow Ban protocol engaged.")
-        await interaction.response.send_message(f"✅ **𝐄𝐜𝐡𝐨:** User {user_id} has been shadow-banned.")
-    except Exception as e:
-        await interaction.response.send_message(f"❌ Error: {e}")
 
 # --- SETUP WIZARD ---
 class SetupWizard(discord.ui.View):
@@ -70,10 +64,11 @@ async def on_message(message):
 
     await bot.process_commands(message)
 
-# --- EXECUTION ---
+# --- SYNCING ---
 @bot.event
-async def setup_hook():
-    await bot.tree.[span_2](start_span)sync() # Syncs your slash commands with Discord[span_2](end_span)
+async def on_ready():
+    await bot.tree.sync()
+    print(f"✅ 𝐄𝐜𝐡𝐨 is online and synced.")
 
 async def main():
     db = sqlite3.connect('edith_mainframe.db')

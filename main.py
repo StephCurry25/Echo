@@ -4,18 +4,19 @@ from discord.ext import commands
 import os
 import asyncio
 
-# --- CONFIGURATION ---
+# --- CONFIG & INTENTS ---
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Configuration Storage
+# Config persistence
 config = {"welcome_ch": None, "audit_ch": None, "admin_role": None, "theme": "Robot", "assign_role": None}
 
-# --- UI COMPONENTS ---
+# --- TICKET & AUDIT UI ---
 class TicketOpenView(discord.ui.View):
     def __init__(self): super().__init__(timeout=None)
+    
     @discord.ui.button(label="📩 Open Ticket", style=discord.ButtonStyle.primary, custom_id="open_ticket")
     async def open(self, i: discord.Interaction, b: discord.ui.Button):
         channel = await i.guild.create_text_channel(f"ticket-{i.user.name}")
@@ -23,16 +24,16 @@ class TicketOpenView(discord.ui.View):
         await channel.set_permissions(i.user, read_messages=True, send_messages=True)
         await i.response.send_message(f"✅ Ticket created: {channel.mention}", ephemeral=True)
         if config["audit_ch"]:
-            await config["audit_ch"].send(f"📂 Ticket opened by {i.user.name}")
+            await config["audit_ch"].send(f"📂 Ticket opened by {i.user.name} in {channel.mention}")
 
 # --- SETUP COMMANDS ---
 @bot.tree.command(name="setup", description="Setup welcome channel, role, and theme")
 async def setup(i: discord.Interaction, channel: discord.TextChannel, role: discord.Role, theme: str):
     config.update({"welcome_ch": channel, "assign_role": role, "theme": theme})
     embed = discord.Embed(title="⚙️ Configuration Updated", color=discord.Color.green())
-    embed.add_field(name="Channel", value=channel.mention, inline=True)
-    embed.add_field(name="Theme", value=theme, inline=True)
-    embed.add_field(name="Auto-Role", value=role.name, inline=True)
+    embed.add_field(name="Channel", value=channel.mention)
+    embed.add_field(name="Auto-Role", value=role.name)
+    embed.add_field(name="Theme", value=theme)
     await i.response.send_message(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="tsetup", description="Setup Ticket System: Audit channel and Admin role")
@@ -44,7 +45,7 @@ async def tsetup(i: discord.Interaction, audit_channel: discord.TextChannel, adm
     await i.channel.send(embed=embed, view=TicketOpenView())
     await i.response.send_message("✅ Ticket system configured.", ephemeral=True)
 
-# --- MODERATION COMMANDS ---
+# --- MODERATION ---
 @bot.tree.command(name="unban", description="Unban a user by username")
 async def unban(i: discord.Interaction, username: str):
     async for ban_entry in i.guild.bans():
@@ -75,28 +76,22 @@ async def unmute(i: discord.Interaction, member: discord.Member):
 # --- EVENTS ---
 @bot.event
 async def on_member_join(member):
-    if config["assign_role"]:
-        await member.add_roles(config["assign_role"])
+    if config["assign_role"]: await member.add_roles(config["assign_role"])
     if config["welcome_ch"]:
         themes = {
-            "StarWars": f"The Force is strong with {member.mention}! Welcome to the Alliance.",
-            "Lego": f"Welcome {member.mention}! Everything is awesome!",
-            "Pirate": f"Ahoy {member.mention}! Welcome aboard the ship!",
-            "Robot": f"Beep boop! Hello {member.mention}, system online."
+            "StarWars": f"The Force is strong with {member.mention}!",
+            "Lego": f"Everything is awesome, {member.mention}!",
+            "Pirate": f"Ahoy {member.mention}! Welcome aboard!",
+            "Robot": f"System online. Welcome, {member.mention}."
         }
-        msg = themes.get(config["theme"], f"Welcome {member.mention}!")
-        embed = discord.Embed(title="Welcome!", description=msg, color=discord.Color.gold())
+        embed = discord.Embed(title="Welcome!", description=themes.get(config["theme"], "Welcome!"), color=discord.Color.gold())
         await config["welcome_ch"].send(embed=embed)
 
 @bot.event
 async def on_ready():
     await bot.tree.sync()
-    print(f"✅ Bot '{bot.user}' is online and commands synced.")
+    print("✅ Bot is online.")
 
-# --- STARTUP ---
 if __name__ == "__main__":
     token = os.environ.get("TOKEN")
-    if token:
-        bot.run(token.strip())
-    else:
-        print("❌ ERROR: TOKEN environment variable not found.")
+    if token: bot.run(token.strip())

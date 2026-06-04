@@ -1,3 +1,11 @@
+from keep_alive import keep_alive # Import the function
+
+# ... your bot code ...
+
+async def main():
+    keep_alive() # Start the web server
+    await bot.start(TOKEN.strip())
+
 import os
 import discord
 from discord import app_commands

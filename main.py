@@ -39,7 +39,6 @@ bot = EchoBot()
 async def on_ready():
     print(f"🚀 𝐄𝐜𝐡𝐨 IS ONLINE | {bot.user.name}")
     await bot.change_presence(status=discord.Status.online, activity=discord.Game(name="!cmds"))
-    print(f"📡 Status set to Online. Connected to {len(bot.guilds)} servers.")
 
 @bot.event
 async def on_message(message):
@@ -65,6 +64,23 @@ async def on_message(message):
     
     await bot.process_commands(message)
 
+@bot.event
+async def on_member_join(member):
+    db = sqlite3.connect('edith_mainframe.db')
+    cursor = db.cursor()
+    cursor.execute("SELECT newcomer_role_name, welcome_dm FROM server_settings WHERE guild_id=?", (member.guild.id,))
+    res = cursor.fetchone()
+    db.close()
+    
+    if res:
+        # Assign Role
+        role = discord.utils.get(member.guild.roles, name=res[0])
+        if role: await member.add_roles(role)
+        # Send DM Info
+        try:
+            await member.send(f"🕶️ **𝐄𝐜𝐡𝐨 Briefing:** {res[1]}")
+        except: pass
+
 @bot.check
 async def globally_only_owner(ctx):
     return ctx.author.id == OWNER_ID
@@ -77,14 +93,19 @@ async def ping(ctx):
 @bot.command()
 async def cmds(ctx):
     embed = discord.Embed(title="🕶️ 𝐄𝐜𝐡𝐨 MANIFEST", color=0x2b2d31)
-    embed.add_field(name="🛡️ CORE", value="`!setup`, `!ping`, `!cmds`, `!afk`", inline=False)
-    embed.add_field(name="📦 STORAGE", value="`!store`, `!storage`, `!unstore`, `!delete`", inline=False)
+    embed.add_field(name="🛡️ CORE", value="`!setup [role] [message]`, `!ping`, `!cmds`, `!afk [reason]`", inline=False)
+    embed.add_field(name="📦 STORAGE", value="`!store`, `!unstore`, `!delete`", inline=False)
     embed.add_field(name="⏰ ALERTS", value="`!remind [mins] [reason]`", inline=False)
     await ctx.send(embed=embed)
 
 @bot.command()
-async def setup(ctx):
-    await ctx.send("✅ **𝐄𝐜𝐡𝐨:** Systems initialized. Security sector bypass active.")
+async def setup(ctx, role_name: str, *, dm_message: str):
+    db = sqlite3.connect('edith_mainframe.db')
+    cursor = db.cursor()
+    cursor.execute('REPLACE INTO server_settings (guild_id, newcomer_role_name, welcome_dm) VALUES (?, ?, ?)', (ctx.guild.id, role_name, dm_message))
+    db.commit()
+    db.close()
+    await ctx.send(f"✅ **𝐄𝐜𝐡𝐨:** Protocols updated. Newcomers will receive role **{role_name}** and a custom DM briefing.")
 
 @bot.command()
 async def afk(ctx, *, reason: str = "Away"):
@@ -132,7 +153,6 @@ async def delete(ctx, k):
     db.close()
     await ctx.send(f"🗑️ **𝐄𝐜𝐡𝐨:** Purged `{k}`")
 
-# Loops
 @tasks.loop(seconds=5)
 async def reminder_scheduler():
     db = sqlite3.connect('edith_mainframe.db')
@@ -146,12 +166,12 @@ async def reminder_scheduler():
             db.commit()
     db.close()
 
-# Main entry
 async def main():
     db = sqlite3.connect('edith_mainframe.db')
     db.execute('CREATE TABLE IF NOT EXISTS storage (key TEXT PRIMARY KEY, content TEXT)')
     db.execute('CREATE TABLE IF NOT EXISTS reminders (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, channel_id INTEGER, end_time TEXT, reason TEXT)')
     db.execute('CREATE TABLE IF NOT EXISTS afk (user_id INTEGER PRIMARY KEY, reason TEXT)')
+    db.execute('CREATE TABLE IF NOT EXISTS server_settings (guild_id INTEGER PRIMARY KEY, newcomer_role_name TEXT, welcome_dm TEXT)')
     db.commit()
     db.close()
 

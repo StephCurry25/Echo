@@ -4,75 +4,75 @@ from discord import app_commands
 from discord.ext import commands
 import sqlite3
 import asyncio
-from flask import Flask, jsonify
+from flask import Flask
 import werkzeug.serving
 
 TOKEN = os.environ.get('TOKEN')
 PORT = 8080
 app = Flask('')
 
-@app.route('/')
-def home():
-    return jsonify({"status": "online"}), 200
-
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# --- SETUP WIZARD ---
-class SetupWizard(discord.ui.View):
+# --- MODAL FOR INPUTS ---
+class SetupModal(discord.ui.Modal):
+    def __init__(self, title, field_label, db_column):
+        super().__init__(title=title)
+        self.db_column = db_column
+        self.input_field = discord.ui.TextInput(label=field_label, style=discord.TextStyle.paragraph)
+        self.add_item(self.input_field)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        db = sqlite3.connect('edith_mainframe.db')
+        db.execute(f'UPDATE server_settings SET {self.db_column}=? WHERE guild_id=?', (self.input_field.value, interaction.guild.id))
+        db.commit()
+        db.close()
+        await interaction.response.send_message(f"✅ Saved {self.db_column}: {self.input_field.value}", ephemeral=True)
+
+# --- UI WITH MODAL TRIGGERS ---
+class SetupView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
-        self.page = 1
 
-    def get_embed(self):
-        pages = {
-            1: ("🛡️ Security Gate", "Configure your security settings."),
-            2: ("🎭 Role Setup", "Assign the newcomer role."),
-            3: ("✉️ Welcome DM", "Set the DM briefing message.")
-        }
-        title, desc = pages.get(self.page, ("Error", "Unknown page"))
-        return discord.Embed(title=f"𝐄𝐜𝐡𝐨 | {title}", description=desc)
+    @discord.ui.button(label="Security Gate", style=discord.ButtonStyle.danger)
+    async def sec_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(SetupModal("Security Gate", "Enter Security Rule:", "security_gate"))
 
-    @discord.ui.button(label="Previous", style=discord.ButtonStyle.secondary)
-    async def prev(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.page > 1: self.page -= 1
-        await interaction.response.edit_message(embed=self.get_embed(), view=self)
+    @discord.ui.button(label="Newcomer Role", style=discord.ButtonStyle.primary)
+    async def role_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(SetupModal("Role Setup", "Enter Role Name:", "role_name"))
 
-    @discord.ui.button(label="Next", style=discord.ButtonStyle.primary)
-    async def next(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.page < 3: self.page += 1
-        await interaction.response.edit_message(embed=self.get_embed(), view=self)
+    @discord.ui.button(label="Welcome DM", style=discord.ButtonStyle.secondary)
+    async def dm_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(SetupModal("DM Setup", "Enter Welcome Message:", "welcome_dm"))
 
-@bot.tree.command(name="setup", description="Open the 𝐄𝐜𝐡𝐨 setup wizard")
+# --- SLASH COMMANDS ---
+@bot.tree.command(name="setup", description="Open the Echo setup UI")
 async def setup(interaction: discord.Interaction):
-    view = SetupWizard()
-    await interaction.response.send_message(embed=view.get_embed(), view=view)
+    await interaction.response.send_message("Configure your server:", view=SetupView())
 
-# --- LISTENERS ---
-@bot.event
-async def on_message(message):
-    if message.author.bot: return
+@bot.tree.command(name="kick", description="Kick a member")
+@app_commands.checks.has_permissions(kick_members=True)
+async def kick(interaction: discord.Interaction, member: discord.Member, reason: str = None):
+    await member.kick(reason=reason)
+    await interaction.response.send_message(f"👢 Kicked {member.name}.")
 
-    # Auto-remove AFK
-    db = sqlite3.connect('edith_mainframe.db')
-    cursor = db.cursor()
-    cursor.execute("DELETE FROM afk WHERE user_id=?", (message.author.id,))
-    if cursor.rowcount > 0:
-        await message.channel.send(f"🕶️ **𝐄𝐜𝐡𝐨:** Welcome back, {message.author.mention}! AFK status cleared.")
-    db.commit()
-    db.close()
+@bot.tree.command(name="ban", description="Ban a member")
+@app_commands.checks.has_permissions(ban_members=True)
+async def ban(interaction: discord.Interaction, member: discord.Member, reason: str = None):
+    await member.ban(reason=reason)
+    await interaction.response.send_message(f"🔨 Banned {member.name}.")
 
-    await bot.process_commands(message)
-
-# --- SYNCING ---
+# --- SYNC & RUN ---
 @bot.event
 async def on_ready():
     await bot.tree.sync()
-    print(f"✅ 𝐄𝐜𝐡𝐨 is online and synced.")
+    print("✅ Echo is online and synced.")
 
 async def main():
     db = sqlite3.connect('edith_mainframe.db')
-    db.execute('CREATE TABLE IF NOT EXISTS afk (user_id INTEGER PRIMARY KEY, reason TEXT)')
+    db.execute('CREATE TABLE IF NOT EXISTS server_settings (guild_id INTEGER PRIMARY KEY, role_name TEXT, welcome_dm TEXT, security_gate TEXT)')
+    db.execute('INSERT OR IGNORE INTO server_settings (guild_id) VALUES (0)')
     db.commit()
     db.close()
     

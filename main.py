@@ -6,121 +6,100 @@ import threading
 import logging
 import json
 import traceback
-from flask import Flask
 
-# --- SECTION 1: LOGGING & WEB SERVER ---
-# Dedicated logging for professional debugging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(name)s: %(message)s')
-logger = logging.getLogger('EchoBot-Production')
+# --- 1. SETUP & CRASH PROTECTION ---
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger('EchoBot-FIXED')
 
-app = Flask(__name__)
-@app.route('/')
-def health_check(): return "System Status: Online"
-def start_web_server(): app.run(host='0.0.0.0', port=8080)
-
-# --- SECTION 2: BOT CONFIGURATION ---
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 intents.guilds = True
 
-bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
+# We wrap the bot in a class to ensure it loads fully
+class EchoBot(commands.Bot):
+    def __init__(self):
+        super().__init__(command_prefix="!", intents=intents, help_command=None)
+    
+    async def setup_hook(self):
+        # Adding the view here makes the buttons persistent
+        self.add_view(PersistentDashboard())
+        await self.tree.sync()
+        logger.info("Commands synced and views registered.")
 
-# Persistent storage logic
-CONFIG_FILE = "config.json"
+bot = EchoBot()
+
+# --- 2. STORAGE (Check for config.json) ---
 def load_config():
-    if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, "r") as f: return json.load(f)
-    return {"automod": False, "autorole_id": None, "log_channel_id": None}
-
-def save_config(data):
-    with open(CONFIG_FILE, "w") as f: json.dump(data, f, indent=4)
+    if not os.path.exists("config.json"):
+        with open("config.json", "w") as f: json.dump({"automod": False, "autorole_id": None}, f)
+    with open("config.json", "r") as f: return json.load(f)
 
 config = load_config()
 
-# --- SECTION 3: INTERACTIVE DASHBOARD ---
+# --- 3. UI DASHBOARD ---
 class PersistentDashboard(ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
     @ui.button(label="Toggle AutoMod", style=discord.ButtonStyle.danger)
-    async def toggle_automod(self, i: discord.Interaction, b: ui.Button):
+    async def toggle(self, i: discord.Interaction, b: ui.Button):
         config["automod"] = not config["automod"]
-        save_config(config)
-        await i.response.send_message(f"AutoMod is now: {config['automod']}", ephemeral=True)
+        await i.response.send_message(f"AutoMod: {config['automod']}", ephemeral=True)
 
     @ui.role_select(placeholder="Select Autorole")
-    async def select_autorole(self, i: discord.Interaction, select: ui.RoleSelect):
-        config["autorole_id"] = select.values[0].id
-        save_config(config)
-        await i.response.send_message(f"Autorole set to: {select.values[0].name}", ephemeral=True)
+    async def autorole(self, i: discord.Interaction, s: ui.RoleSelect):
+        config["autorole_id"] = s.values[0].id
+        await i.response.send_message(f"Autorole: {s.values[0].name}", ephemeral=True)
 
-    @ui.channel_select(placeholder="Select Log Channel", channel_types=[discord.ChannelType.text])
-    async def select_log(self, i: discord.Interaction, select: ui.ChannelSelect):
-        config["log_channel_id"] = select.values[0].id
-        save_config(config)
-        await i.response.send_message(f"Logs set to: {select.values[0].mention}", ephemeral=True)
-
-# --- SECTION 4: MODERATION & UTILITY COMMANDS ---
-@bot.tree.command(name="dashboard", description="Manage server settings")
+# --- 4. COMMANDS ---
+@bot.tree.command(name="dashboard", description="Open settings")
 async def dashboard(i: discord.Interaction):
-    await i.response.send_message("⚙️ **Server Settings**", view=PersistentDashboard(), ephemeral=True)
+    await i.response.send_message("⚙️", view=PersistentDashboard(), ephemeral=True)
 
-@bot.tree.command(name="kick", description="Kick a member")
-@app_commands.checks.has_permissions(kick_members=True)
-async def kick(i: discord.Interaction, member: discord.Member, reason: str = "None"):
-    await member.kick(reason=reason)
-    await i.response.send_message(f"👢 Kicked {member.name}")
+@bot.tree.command(name="kick", description="Kick user")
+async def kick(i: discord.Interaction, m: discord.Member, r: str = "None"):
+    await m.kick(reason=r); await i.response.send_message(f"Kicked {m.name}")
 
-@bot.tree.command(name="ban", description="Ban a member")
-@app_commands.checks.has_permissions(ban_members=True)
-async def ban(i: discord.Interaction, member: discord.Member, reason: str = "None"):
-    await member.ban(reason=reason)
-    await i.response.send_message(f"🔨 Banned {member.name}")
+@bot.tree.command(name="ban", description="Ban user")
+async def ban(i: discord.Interaction, m: discord.Member, r: str = "None"):
+    await m.ban(reason=r); await i.response.send_message(f"Banned {m.name}")
 
-@bot.tree.command(name="mute", description="Mute a user")
-@app_commands.checks.has_permissions(manage_roles=True)
-async def mute(i: discord.Interaction, member: discord.Member):
+@bot.tree.command(name="mute", description="Mute user")
+async def mute(i: discord.Interaction, m: discord.Member):
     role = discord.utils.get(i.guild.roles, name="Muted")
     if not role: role = await i.guild.create_role(name="Muted", permissions=discord.Permissions(send_messages=False))
-    await member.add_roles(role)
-    await i.response.send_message(f"🤐 Muted {member.name}")
+    await m.add_roles(role); await i.response.send_message(f"Muted {m.name}")
 
-@bot.tree.command(name="unmute", description="Unmute a user")
-@app_commands.checks.has_permissions(manage_roles=True)
-async def unmute(i: discord.Interaction, member: discord.Member):
+@bot.tree.command(name="unmute", description="Unmute user")
+async def unmute(i: discord.Interaction, m: discord.Member):
     role = discord.utils.get(i.guild.roles, name="Muted")
-    await member.remove_roles(role)
-    await i.response.send_message(f"🔊 Unmuted {member.name}")
+    await m.remove_roles(role); await i.response.send_message(f"Unmuted {m.name}")
 
-@bot.tree.command(name="clear", description="Bulk delete messages")
-@app_commands.checks.has_permissions(manage_messages=True)
-async def clear(i: discord.Interaction, amount: int):
-    purged = await i.channel.purge(limit=amount)
-    await i.response.send_message(f"🧹 Purged {len(purged)} messages.", ephemeral=True)
+@bot.tree.command(name="clear", description="Clear chat")
+async def clear(i: discord.Interaction, n: int):
+    d = await i.channel.purge(limit=n)
+    await i.response.send_message(f"Cleared {len(d)}", ephemeral=True)
 
-# --- SECTION 5: EVENTS & SYNC ---
-@bot.event
-async def on_member_join(member):
-    if config["autorole_id"]:
-        role = member.guild.get_role(config["autorole_id"])
-        if role: await member.add_roles(role)
+@bot.tree.command(name="userinfo", description="User info")
+async def userinfo(i: discord.Interaction, m: discord.Member):
+    await i.response.send_message(f"{m.name} | ID: {m.id}")
 
-@bot.event
-async def on_message(message):
-    if config["automod"] and not message.author.bot:
-        if any(w in message.content.lower() for w in ["badword", "scam"]):
-            await message.delete()
-    await bot.process_commands(message)
+@bot.tree.command(name="announce", description="Global broadcast")
+async def announce(i: discord.Interaction, msg: str):
+    if i.user.id != 1219266886143967245: return
+    for g in bot.guilds:
+        if g.system_channel: await g.system_channel.send(f"📢 {msg}")
+    await i.response.send_message("Sent.")
 
-@bot.event
-async def on_ready():
-    # Persistence for UI components requires adding the view to the bot
-    bot.add_view(PersistentDashboard())
-    await bot.tree.sync()
-    logger.info("Bot is ready and synced.")
-
+# --- 5. FINAL LAUNCH ---
 if __name__ == "__main__":
-    threading.Thread(target=start_web_server, daemon=True).start()
     token = os.environ.get("TOKEN")
-    if token: bot.run(token.strip())
+    if not token:
+        logger.error("!!! TOKEN IS MISSING. Check your environment variables.")
+        exit(1) # This is why you get Status 1
+    try:
+        bot.run(token.strip())
+    except Exception as e:
+        logger.error(f"FATAL ERROR: {e}")
+        traceback.print_exc()

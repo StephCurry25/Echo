@@ -203,8 +203,9 @@ async def command_clear(interaction: discord.Interaction, amount: int):
 
 # --- SECTION 7: UI EMBEDDED MODAL & AUTOMOD ENGINE ---
 class BlacklistAddModal(ui.Modal, title="Add Blacklist Words (Max 4k Chars)"):
+    # FIX: Label shortened below 45 characters to satisfy strict Discord API constraints
     words_input = ui.TextInput(
-        label="Enter terms (Separated by commas OR new lines)",
+        label="Enter terms (split with comma or enter)",
         style=discord.TextStyle.paragraph,
         placeholder="scam\nfree nitro\nfakebot, malware",
         required=True,
@@ -212,7 +213,6 @@ class BlacklistAddModal(ui.Modal, title="Add Blacklist Words (Max 4k Chars)"):
     )
 
     async def on_submit(self, interaction: discord.Interaction):
-        # Instantly defer to completely eliminate 3-second timeout limits
         await interaction.response.defer(ephemeral=True)
         
         raw_text = self.words_input.value
@@ -252,7 +252,6 @@ blacklist_group = app_commands.Group(name="blacklist", description="Filter word 
 @blacklist_group.command(name="add", description="Open the secure UI input box to paste blocklists")
 @app_commands.checks.has_permissions(administrator=True)
 async def blacklist_add(interaction: discord.Interaction):
-    # Triggers the embedded pop-up window interface directly
     await interaction.response.send_modal(BlacklistAddModal())
 
 @blacklist_group.command(name="remove", description="Remove word from filters")

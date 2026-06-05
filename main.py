@@ -113,35 +113,59 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
             pass
 
 # --- SECTION 6: FAILSAFE MODERATION SYSTEMS ---
-@bot.tree.command(name="kick", description="Kick a member from the server")
+@bot.tree.command(name="kick", description="Kick a member from the server (Accepts Member or User ID)")
 @app_commands.checks.has_permissions(kick_members=True)
-async def command_kick(interaction: discord.Interaction, member: discord.Member, reason: str = "None"):
+async def command_kick(interaction: discord.Interaction, target: str, reason: str = "None"):
+    await interaction.response.defer(ephemeral=True)
+    
+    # Extract ID cleanly if they paste a mention string format <@12345>
+    clean_id = target.replace("<@", "").replace(">", "").replace("!", "")
+    
+    try:
+        member = interaction.guild.get_member(int(clean_id)) or await interaction.guild.fetch_member(int(clean_id))
+    except:
+        return await interaction.followup.send("❌ Target user could not be found within this server hierarchy.")
+
     if member.top_role >= interaction.user.top_role and interaction.user.id != interaction.guild.owner_id:
-        return await interaction.response.send_message("❌ Target has an equal or higher role than you.", ephemeral=True)
+        return await interaction.followup.send("❌ Target has an equal or higher role than you.")
     if member.top_role >= interaction.guild.me.top_role:
-        return await interaction.response.send_message("❌ Move my bot role above the target's role in server settings.", ephemeral=True)
+        return await interaction.followup.send("❌ Move my bot role above the target's role in server settings.")
     
     try:
         await member.kick(reason=reason)
-        await interaction.response.send_message(f"👢 **{member.name}** has been kicked.")
+        await interaction.channel.send(f"👢 **{member.name}** has been kicked.")
         await send_audit_log(interaction.guild, "Kick Executed", f"Target: {member.mention}\nMod: {interaction.user.mention}", discord.Color.orange())
-    except:
-        await interaction.response.send_message("❌ Permission Execution Error.", ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"❌ Permission Execution Error: `{e}`")
 
-@bot.tree.command(name="ban", description="Ban a member from the server")
+@bot.tree.command(name="ban", description="Ban a member from the server (Accepts Member or User ID)")
 @app_commands.checks.has_permissions(ban_members=True)
-async def command_ban(interaction: discord.Interaction, member: discord.Member, reason: str = "None"):
-    if member.top_role >= interaction.user.top_role and interaction.user.id != interaction.guild.owner_id:
-        return await interaction.response.send_message("❌ Target has an equal or higher role than you.", ephemeral=True)
-    if member.top_role >= interaction.guild.me.top_role:
-        return await interaction.response.send_message("❌ Move my bot role above the target's role in server settings.", ephemeral=True)
+async def command_ban(interaction: discord.Interaction, target: str, reason: str = "None"):
+    await interaction.response.defer(ephemeral=True)
+    clean_id = target.replace("<@", "").replace(">", "").replace("!", "")
+    
+    # Drop down to a pure user object fallback if they aren't inside the server right now
+    user_to_ban = None
+    try:
+        user_to_ban = interaction.guild.get_member(int(clean_id)) or await interaction.guild.fetch_member(int(clean_id))
+    except:
+        try:
+            user_to_ban = await bot.fetch_user(int(clean_id))
+        except:
+            return await interaction.followup.send("❌ Invalid User reference or numerical ID.")
+
+    if isinstance(user_to_ban, discord.Member):
+        if user_to_ban.top_role >= interaction.user.top_role and interaction.user.id != interaction.guild.owner_id:
+            return await interaction.followup.send("❌ Target has an equal or higher role than you.")
+        if user_to_ban.top_role >= interaction.guild.me.top_role:
+            return await interaction.followup.send("❌ Move my bot role above the target's role in server settings.")
 
     try:
-        await member.ban(reason=reason)
-        await interaction.response.send_message(f"🔨 **{member.name}** has been banned.")
-        await send_audit_log(interaction.guild, "Ban Executed", f"Target: {member.mention}\nMod: {interaction.user.mention}", discord.Color.red())
-    except:
-        await interaction.response.send_message("❌ Permission Execution Error.", ephemeral=True)
+        await interaction.guild.ban(user_to_ban, reason=reason)
+        await interaction.channel.send(f"🔨 **{user_to_ban.name}** has been banned.")
+        await send_audit_log(interaction.guild, "Ban Executed", f"Target: {user_to_ban.mention if hasattr(user_to_ban, 'mention') else user_to_ban.name}\nMod: {interaction.user.mention}", discord.Color.red())
+    except Exception as e:
+        await interaction.followup.send(f"❌ Permission Execution Error: `{e}`")
 
 @bot.tree.command(name="unban", description="Unban a member by ID string")
 @app_commands.checks.has_permissions(ban_members=True)
@@ -154,11 +178,19 @@ async def command_unban(interaction: discord.Interaction, user_id: str):
     except:
         await interaction.response.send_message("❌ User not found or not banned.", ephemeral=True)
 
-@bot.tree.command(name="mute", description="Apply the Muted server role")
+@bot.tree.command(name="mute", description="Apply the Muted server role (Accepts Member or User ID)")
 @app_commands.checks.has_permissions(manage_roles=True)
-async def command_mute(interaction: discord.Interaction, member: discord.Member, reason: str = "None"):
+async def command_mute(interaction: discord.Interaction, target: str, reason: str = "None"):
+    await interaction.response.defer(ephemeral=True)
+    clean_id = target.replace("<@", "").replace(">", "").replace("!", "")
+    
+    try:
+        member = interaction.guild.get_member(int(clean_id)) or await interaction.guild.fetch_member(int(clean_id))
+    except:
+        return await interaction.followup.send("❌ Target must be an active member inside this server.")
+
     if member.top_role >= interaction.guild.me.top_role:
-        return await interaction.response.send_message("❌ My role level is below the target.", ephemeral=True)
+        return await interaction.followup.send("❌ My role level is below the target.")
 
     role = discord.utils.get(interaction.guild.roles, name="Muted")
     if not role:
@@ -167,28 +199,36 @@ async def command_mute(interaction: discord.Interaction, member: discord.Member,
             for channel in interaction.guild.channels:
                 await channel.set_permissions(role, send_messages=False, speak=False)
         except:
-            return await interaction.response.send_message("❌ Cannot generate a Muted role.", ephemeral=True)
+            return await interaction.followup.send("❌ Cannot generate a Muted role automatically.")
     
     try:
         await member.add_roles(role, reason=reason)
-        await interaction.response.send_message(f"🤐 **{member.name}** has been muted.")
+        await interaction.channel.send(f"🤐 **{member.name}** has been muted.")
         await send_audit_log(interaction.guild, "Mute Executed", f"Target: {member.mention}\nMod: {interaction.user.mention}", discord.Color.dark_grey())
     except:
-        await interaction.response.send_message("❌ Role adjustment blocked.", ephemeral=True)
+         await interaction.followup.send("❌ Role adjustment blocked by hierarchy permissions.")
 
-@bot.tree.command(name="unmute", description="Remove the Muted server role")
+@bot.tree.command(name="unmute", description="Remove the Muted server role (Accepts Member or User ID)")
 @app_commands.checks.has_permissions(manage_roles=True)
-async def command_unmute(interaction: discord.Interaction, member: discord.Member):
+async def command_unmute(interaction: discord.Interaction, target: str):
+    await interaction.response.defer(ephemeral=True)
+    clean_id = target.replace("<@", "").replace(">", "").replace("!", "")
+    
+    try:
+        member = interaction.guild.get_member(int(clean_id)) or await interaction.guild.fetch_member(int(clean_id))
+    except:
+        return await interaction.followup.send("❌ Member profile target missing.")
+
     role = discord.utils.get(interaction.guild.roles, name="Muted")
     if role and role in member.roles:
         try:
             await member.remove_roles(role)
-            await interaction.response.send_message(f"🔊 **{member.name}** has been unmuted.")
+            await interaction.channel.send(f"🔊 **{member.name}** has been unmuted.")
             await send_audit_log(interaction.guild, "Unmute Executed", f"Target: {member.mention}\nMod: {interaction.user.mention}", discord.Color.light_grey())
         except:
-            await interaction.response.send_message("❌ Role adjustment blocked.", ephemeral=True)
+            await interaction.followup.send("❌ Role adjustment blocked by permissions.")
     else:
-        await interaction.response.send_message("❌ Target is not currently muted.", ephemeral=True)
+        await interaction.followup.send("❌ Target is not currently muted.")
 
 @bot.tree.command(name="clear", description="Bulk delete text messages")
 @app_commands.checks.has_permissions(manage_messages=True)
@@ -203,7 +243,6 @@ async def command_clear(interaction: discord.Interaction, amount: int):
 
 # --- SECTION 7: UI EMBEDDED MODAL & AUTOMOD ENGINE ---
 class BlacklistAddModal(ui.Modal, title="Add Blacklist Words (Max 4k Chars)"):
-    # FIX: Label shortened below 45 characters to satisfy strict Discord API constraints
     words_input = ui.TextInput(
         label="Enter terms (split with comma or enter)",
         style=discord.TextStyle.paragraph,

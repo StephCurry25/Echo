@@ -5,10 +5,10 @@ import os
 import threading
 from flask import Flask
 
-# --- WEB SERVER (Port 8080) ---
+# --- WEB SERVER & HEARTBEAT (Keeps bot awake) ---
 app = Flask(__name__)
 @app.route('/')
-def home(): return "Bot is running on port 8080"
+def home(): return "Bot is awake!"
 def run_web_server(): app.run(host='0.0.0.0', port=8080)
 
 # --- BOT SETUP ---
@@ -20,14 +20,23 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 config = {"welcome_ch": None, "assign_role": None, "theme": "Robot"}
 
 # --- COMMANDS ---
-@bot.tree.command(name="cmds", description="List all available commands")
+@bot.tree.command(name="cmds", description="List all commands")
 async def cmds(i: discord.Interaction):
     embed = discord.Embed(title="📜 Command List", color=discord.Color.gold())
     embed.add_field(name="Moderation", value="/kick, /ban, /unban, /mute, /unmute, /clear, /lock, /unlock", inline=False)
     embed.add_field(name="Management", value="/setup, /userinfo, /poll", inline=False)
     await i.response.send_message(embed=embed)
 
-@bot.tree.command(name="setup", description="Configure welcome channel, role, and theme")
+@bot.tree.command(name="unban", description="Unban a user by username or ID")
+async def unban(i: discord.Interaction, user_input: str):
+    bans = [entry async for entry in i.guild.bans()]
+    for entry in bans:
+        if str(entry.user) == user_input or str(entry.user.id) == user_input:
+            await i.guild.unban(entry.user)
+            return await i.response.send_message(f"🔓 Successfully unbanned: {entry.user}")
+    await i.response.send_message("❌ User not found in the ban list. Please check the spelling or ID.")
+
+@bot.tree.command(name="setup", description="Configure welcome settings")
 async def setup(i: discord.Interaction, channel: discord.TextChannel, role: discord.Role, theme: str):
     config.update({"welcome_ch": channel, "assign_role": role, "theme": theme})
     await i.response.send_message(f"✅ Configured! Channel: {channel.mention}, Theme: {theme}", ephemeral=True)
@@ -61,8 +70,6 @@ async def poll(i: discord.Interaction, question: str):
     await msg.add_reaction("👍"); await msg.add_reaction("👎")
     await i.response.send_message("✅ Poll created!", ephemeral=True)
 
-# [Insert your previously defined /kick, /ban, /unban, /mute, /unmute commands here]
-
 # --- EVENTS ---
 @bot.event
 async def on_member_join(member):
@@ -75,7 +82,7 @@ async def on_member_join(member):
 @bot.event
 async def on_ready():
     await bot.tree.sync()
-    print("✅ Bot is fully synced and ready.")
+    print("✅ Bot is online and synced.")
 
 if __name__ == "__main__":
     threading.Thread(target=run_web_server).start()

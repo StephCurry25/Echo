@@ -89,10 +89,28 @@ class EchoBot(commands.Bot):
 
     async def setup_hook(self):
         self.add_view(ServerManagementDashboard())
-        await self.tree.sync()
-        logger.info("Application gateway synchronized cleanly.")
+        try:
+            await self.tree.sync()
+            logger.info("Application gateway synchronized cleanly.")
+        except Exception as e:
+            logger.error(f"Command sync warning: {e}")
 
 bot = EchoBot()
+
+# --- AUTOMATED GLOBAL ERROR CATCHER ---
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.errors.MissingPermissions):
+        await interaction.response.send_message(
+            f"❌ **Permission Denied:** You need `Administrator` permissions to run this command.", 
+            ephemeral=True
+        )
+    else:
+        logger.error(f"Execution failure: {error}")
+        try:
+            await interaction.response.send_message(f"❌ **Internal System Error:** `{error}`", ephemeral=True)
+        except:
+            pass
 
 # --- SECTION 6: FAILSAFE MODERATION SYSTEMS ---
 @bot.tree.command(name="kick", description="Kick a member from the server")
@@ -194,6 +212,9 @@ class BlacklistAddModal(ui.Modal, title="Add Blacklist Words (Max 4k Chars)"):
     )
 
     async def on_submit(self, interaction: discord.Interaction):
+        # Instantly defer to completely eliminate 3-second timeout limits
+        await interaction.response.defer(ephemeral=True)
+        
         raw_text = self.words_input.value
         normalized_text = raw_text.replace("\n", ",")
         input_list = [w.strip().lower() for w in normalized_text.split(",") if w.strip()]
@@ -224,13 +245,14 @@ class BlacklistAddModal(ui.Modal, title="Add Blacklist Words (Max 4k Chars)"):
         if not msg:
             msg = "❌ No valid terms processed."
             
-        await interaction.response.send_message(msg, ephemeral=True)
+        await interaction.followup.send(content=msg)
 
 blacklist_group = app_commands.Group(name="blacklist", description="Filter word matrix management")
 
 @blacklist_group.command(name="add", description="Open the secure UI input box to paste blocklists")
 @app_commands.checks.has_permissions(administrator=True)
 async def blacklist_add(interaction: discord.Interaction):
+    # Triggers the embedded pop-up window interface directly
     await interaction.response.send_modal(BlacklistAddModal())
 
 @blacklist_group.command(name="remove", description="Remove word from filters")

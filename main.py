@@ -5,7 +5,7 @@ import os
 import threading
 from flask import Flask
 
-# --- WEB SERVER & HEARTBEAT (Keeps bot awake) ---
+# --- WEB SERVER (Port 8080) ---
 app = Flask(__name__)
 @app.route('/')
 def home(): return "Bot is awake!"
@@ -17,72 +17,41 @@ intents.message_content = True
 intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-config = {"welcome_ch": None, "assign_role": None, "theme": "Robot"}
+# --- GLOBAL ANNOUNCE (Dyno-style) ---
+@bot.tree.command(name="announce", description="Send an update to all servers")
+async def announce(i: discord.Interaction, message: str):
+    # Authorized User ID
+    if i.user.id != 1219266886143967245: 
+        return await i.response.send_message("❌ You are not authorized to use this.", ephemeral=True)
+    
+    count = 0
+    embed = discord.Embed(title="📢 Bot Update", description=message, color=discord.Color.red())
+    for guild in bot.guilds:
+        channel = guild.system_channel or next((c for c in guild.text_channels if c.permissions_for(guild.me).send_messages), None)
+        if channel:
+            await channel.send(embed=embed)
+            count += 1
+            
+    await i.response.send_message(f"✅ Announcement sent to {count} servers.", ephemeral=True)
 
-# --- COMMANDS ---
-@bot.tree.command(name="cmds", description="List all commands")
-async def cmds(i: discord.Interaction):
-    embed = discord.Embed(title="📜 Command List", color=discord.Color.gold())
-    embed.add_field(name="Moderation", value="/kick, /ban, /unban, /mute, /unmute, /clear, /lock, /unlock", inline=False)
-    embed.add_field(name="Management", value="/setup, /userinfo, /poll", inline=False)
-    await i.response.send_message(embed=embed)
-
-@bot.tree.command(name="unban", description="Unban a user by username or ID")
-async def unban(i: discord.Interaction, user_input: str):
-    bans = [entry async for entry in i.guild.bans()]
-    for entry in bans:
-        if str(entry.user) == user_input or str(entry.user.id) == user_input:
-            await i.guild.unban(entry.user)
-            return await i.response.send_message(f"🔓 Successfully unbanned: {entry.user}")
-    await i.response.send_message("❌ User not found in the ban list. Please check the spelling or ID.")
-
-@bot.tree.command(name="setup", description="Configure welcome settings")
-async def setup(i: discord.Interaction, channel: discord.TextChannel, role: discord.Role, theme: str):
-    config.update({"welcome_ch": channel, "assign_role": role, "theme": theme})
-    await i.response.send_message(f"✅ Configured! Channel: {channel.mention}, Theme: {theme}", ephemeral=True)
+# --- MODERATION & UTILS ---
+@bot.tree.command(name="ban", description="Ban a user")
+@app_commands.checks.has_permissions(ban_members=True)
+async def ban(i: discord.Interaction, member: discord.Member, reason: str = "No reason provided"):
+    await member.ban(reason=reason)
+    await i.response.send_message(f"🔨 Banned {member.name}")
 
 @bot.tree.command(name="clear", description="Clear messages")
+@app_commands.checks.has_permissions(manage_messages=True)
 async def clear(i: discord.Interaction, amount: int):
     deleted = await i.channel.purge(limit=amount)
     await i.response.send_message(f"🧹 Cleared {len(deleted)} messages.", ephemeral=True)
 
-@bot.tree.command(name="userinfo", description="Get user info")
-async def userinfo(i: discord.Interaction, member: discord.Member):
-    embed = discord.Embed(title=f"User: {member.name}", color=discord.Color.blue())
-    embed.add_field(name="ID", value=member.id)
-    embed.add_field(name="Joined", value=member.joined_at.strftime("%Y-%m-%d"))
-    await i.response.send_message(embed=embed)
-
-@bot.tree.command(name="lock", description="Lock channel")
-async def lock(i: discord.Interaction):
-    await i.channel.set_permissions(i.guild.default_role, send_messages=False)
-    await i.response.send_message("🔒 Channel locked.")
-
-@bot.tree.command(name="unlock", description="Unlock channel")
-async def unlock(i: discord.Interaction):
-    await i.channel.set_permissions(i.guild.default_role, send_messages=True)
-    await i.response.send_message("🔓 Channel unlocked.")
-
-@bot.tree.command(name="poll", description="Create a poll")
-async def poll(i: discord.Interaction, question: str):
-    embed = discord.Embed(title="📊 Poll", description=question, color=discord.Color.purple())
-    msg = await i.channel.send(embed=embed)
-    await msg.add_reaction("👍"); await msg.add_reaction("👎")
-    await i.response.send_message("✅ Poll created!", ephemeral=True)
-
-# --- EVENTS ---
-@bot.event
-async def on_member_join(member):
-    if config["assign_role"]: await member.add_roles(config["assign_role"])
-    if config["welcome_ch"]:
-        themes = {"StarWars": "The Force is with you!", "Lego": "Everything is awesome!", "Pirate": "Ahoy!", "Robot": "System online."}
-        msg = themes.get(config["theme"], "Welcome!")
-        await config["welcome_ch"].send(embed=discord.Embed(title="Welcome!", description=f"{msg} {member.mention}", color=discord.Color.green()))
-
+# --- BOT STARTUP ---
 @bot.event
 async def on_ready():
     await bot.tree.sync()
-    print("✅ Bot is online and synced.")
+    print(f"✅ Bot is live as {bot.user}")
 
 if __name__ == "__main__":
     threading.Thread(target=run_web_server).start()
